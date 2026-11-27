@@ -12,6 +12,7 @@ from veritas.ingestion.service import IngestionService
 
 ROOT = Path(__file__).parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
+sys.path.insert(0, str(ROOT / "tests"))
 
 import make_sample_documents as samples  # noqa: E402
 

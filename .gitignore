@@ -37,3 +37,6 @@ benchmarks/hover/*
 .DS_Store
 .idea/
 .vscode/
+.venv
+.venv.icloud-old/
+!tests/fixtures/*.sqlite3

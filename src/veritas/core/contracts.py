@@ -16,7 +16,7 @@ Design rules enforced here (see docs/data_model.md):
 from __future__ import annotations
 
 import re
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from enum import StrEnum
 from typing import Literal, Self
@@ -24,13 +24,29 @@ from typing import Literal, Self
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 _SHA256 = r"^[0-9a-f]{64}$"
-_PARTIAL_DATE = re.compile(r"^\d{4}(-(0[1-9]|1[0-2])(-(0[1-9]|[12]\d|3[01]))?)?$")
+_PARTIAL_DATE = re.compile(r"^(\d{4})(?:-(\d{2})(?:-(\d{2}))?)?$")
 _CELL_RANGE = re.compile(r"^[A-Z]{1,3}[1-9]\d*(:[A-Z]{1,3}[1-9]\d*)?$")
 _SNAKE = r"^[a-z][a-z0-9_]*$"
 
 
 def utcnow() -> datetime:
     return datetime.now(UTC)
+
+
+def parse_partial_date(value: str) -> tuple[int, int | None, int | None] | None:
+    """'2025' / '2025-02' / '2024-02-29' -> (year, month, day); None if malformed or
+    not a real calendar date ('2025-02-30', '2025-13', and a day without a month)."""
+    m = _PARTIAL_DATE.match(value)
+    if not m:
+        return None
+    year = int(m.group(1))
+    month = int(m.group(2)) if m.group(2) else None
+    day = int(m.group(3)) if m.group(3) else None
+    try:
+        date(year, 1 if month is None else month, 1 if day is None else day)
+    except ValueError:  # month 0/13, day 0/32, 30 February, 29 February in non-leap years
+        return None
+    return year, month, day
 
 
 class _Strict(BaseModel):
@@ -71,6 +87,34 @@ class Modality(StrEnum):
     ACTUAL = "actual"
     FORECAST = "forecast"
     UNKNOWN = "unknown"
+
+
+class ObjectType(StrEnum):
+    """What kind of value a claim's object is."""
+
+    MONEY = "money"  # Quantity with currency
+    NUMBER = "number"  # Quantity with a non-currency unit (or none)
+    PERCENT = "percent"  # Quantity with unit 'percent'
+    DATE = "date"  # str, YYYY / YYYY-MM / YYYY-MM-DD
+    TEXT = "text"  # str
+    BOOLEAN = "boolean"  # bool
+
+
+class EntityType(StrEnum):
+    ORGANIZATION = "organization"
+    PROJECT = "project"
+    PERSON = "person"
+    LOCATION = "location"
+    PROGRAM = "program"
+    OTHER = "other"
+
+
+class MatchStatus(StrEnum):
+    """Outcome of comparing an entity mention with an existing entity."""
+
+    MERGED = "merged"  # strong evidence: exact normalised name or explicit alias definition
+    NEEDS_REVIEW = "needs_review"  # plausible but not proven; never merged automatically
+    REJECTED = "rejected"  # reviewed and found to be different entities
 
 
 class ConflictType(StrEnum):
@@ -221,8 +265,52 @@ class DocumentSpan(_Strict):
 class Entity(_Strict):
     entity_id: str = Field(min_length=1)
     canonical_name: str = Field(min_length=1)
-    entity_type: str | None = Field(default=None, description="e.g. organisation, project")
+    normalized_name: str | None = Field(default=None, description="Set by entities.normalize")
+    entity_type: EntityType | None = None
     aliases: list[str] = Field(default_factory=list)
+    mention_ids: list[str] = Field(default_factory=list, description="Source references")
+
+
+class EntityMention(_Strict):
+    """One occurrence of an entity name in a located document span."""
+
+    mention_id: str = Field(min_length=1)
+    surface: str = Field(min_length=1, description="Exact text as it appears in the span")
+    normalized: str = Field(min_length=1)
+    entity_type: EntityType
+    span_id: str = Field(min_length=1)
+    document_id: str = Field(min_length=1)
+    char_start: int = Field(ge=0)
+    char_end: int = Field(gt=0)
+    location: SourceLocation
+    entity_id: str | None = Field(
+        default=None, description="Assigned entity; None while the match is ambiguous"
+    )
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        if self.char_end - self.char_start != len(self.surface):
+            raise ValueError("offsets do not match surface length")
+        return self
+
+
+class EntityMatchCandidate(_Strict):
+    """A possible identity between a mention and an entity, with the evidence for it."""
+
+    mention_id: str = Field(min_length=1)
+    entity_id: str = Field(min_length=1)
+    status: MatchStatus
+    score: float = Field(ge=0.0, le=1.0)
+    rule: str = Field(min_length=1, description="e.g. 'exact', 'alias_definition', 'token_set'")
+    explanation: str = Field(min_length=1)
+
+
+class EvidenceRole(StrEnum):
+    """Why an evidence slice is attached to a claim."""
+
+    QUOTE = "quote"  # text the model quoted, located in the source
+    SCOPE = "scope"  # subject / text value / time found in the quote's sentence or row
+    HEADER = "header"  # table column header supporting a currency, unit or boolean
 
 
 class Evidence(_Strict):
@@ -236,6 +324,7 @@ class Evidence(_Strict):
     char_start: int | None = Field(default=None, ge=0, description="Offset into the span text")
     char_end: int | None = Field(default=None, ge=0)
     location: SourceLocation
+    role: EvidenceRole = EvidenceRole.QUOTE
 
     @model_validator(mode="after")
     def _check_offsets(self) -> Self:
@@ -254,6 +343,7 @@ class Evidence(_Strict):
         evidence_id: str,
         span: DocumentSpan,
         quote: str | None = None,
+        role: EvidenceRole = EvidenceRole.QUOTE,
     ) -> Evidence:
         """Build evidence from a parsed span. Fails if the span is unlocated or the
         quote is not literally present in the span text."""
@@ -272,17 +362,65 @@ class Evidence(_Strict):
             char_start=start,
             char_end=start + len(quote),
             location=span.location,
+            role=role,
         )
 
 
 class Quantity(_Strict):
-    """Numeric value with unit. Decimal avoids float drift in money."""
+    """Numeric value with a unit and/or ISO-4217 currency. Decimal avoids float drift."""
 
     value: Decimal
-    unit: str = Field(min_length=1, description="e.g. 'LKR', 'USD', 'percent'")
+    unit: str | None = Field(default=None, description="e.g. 'percent', 'staff'; or legacy 'LKR'")
+    currency: str | None = Field(default=None, pattern=r"^[A-Z]{3}$", description="ISO 4217")
 
 
 ClaimObject = Quantity | bool | str
+
+
+class MetadataField(StrEnum):
+    CURRENCY = "currency"
+    PERIOD = "period"
+
+
+class MetadataOrigin(StrEnum):
+    MODEL = "model"  # value supplied by the model and confirmed by the evidence
+    ENRICHMENT = "enrichment"  # value read deterministically from the cited evidence
+    NONE = "none"  # no value accepted
+
+
+class MetadataStatus(StrEnum):
+    ACCEPTED = "accepted"
+    REJECTED = "rejected"  # model value not supported by the evidence
+    CONFLICT = "conflict"  # model value contradicts the evidence; neither is used
+    AMBIGUOUS = "ambiguous"  # evidence allows several values; none is used
+    ABSENT = "absent"  # nothing in the evidence
+    NOT_APPLIED = "not_applied"  # evidence has a value the claim's type does not take
+
+
+class MetadataDecision(_Strict):
+    """Why a claim's currency or period is what it is (including null)."""
+
+    field: MetadataField
+    origin: MetadataOrigin
+    status: MetadataStatus
+    value: str | None = Field(default=None, description="Accepted value: 'LKR', '2025..2025'")
+    model_value: str | None = Field(default=None, description="What the model said, verbatim")
+    candidate_value: str | None = Field(default=None, description="What the evidence showed")
+    reason: str = Field(min_length=1)
+    evidence_ids: list[str] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _check(self) -> Self:
+        accepted = self.status is MetadataStatus.ACCEPTED
+        if accepted != (self.value is not None):
+            raise ValueError("value is set exactly when the status is accepted")
+        if accepted and self.origin is MetadataOrigin.NONE:
+            raise ValueError("an accepted value needs an origin")
+        if not accepted and self.origin is not MetadataOrigin.NONE:
+            raise ValueError("only accepted values have an origin")
+        if accepted and not self.evidence_ids:
+            raise ValueError("an accepted value must cite evidence")
+        return self
 
 
 class Claim(_Strict):
@@ -291,20 +429,29 @@ class Claim(_Strict):
     subject_entity_id: str | None = Field(default=None, description="Set by entity resolution")
     predicate: str = Field(pattern=_SNAKE, description="snake_case, e.g. 'budget'")
     object: ClaimObject
+    object_type: ObjectType | None = None
     object_entity_id: str | None = None
     modality: Modality = Modality.UNKNOWN
     valid_from: str | None = Field(default=None, description="YYYY, YYYY-MM or YYYY-MM-DD")
     valid_to: str | None = Field(default=None, description="YYYY, YYYY-MM or YYYY-MM-DD")
+    time_expression: str | None = Field(
+        default=None, description="Source text the period was read from, e.g. 'in January 2025'"
+    )
     negated: bool = Field(default=False, description="True for 'X did not happen'")
     extraction_confidence: float = Field(ge=0.0, le=1.0)
     extraction_method: Literal["llm", "rule", "table", "manual"] = "llm"
     evidence: list[Evidence] = Field(min_length=1)
+    metadata: list[MetadataDecision] = Field(
+        default_factory=list, description="Provenance of currency and period (enrichment)"
+    )
 
     @field_validator("valid_from", "valid_to")
     @classmethod
     def _check_date(cls, v: str | None) -> str | None:
-        if v is not None and not _PARTIAL_DATE.match(v):
-            raise ValueError(f"invalid date {v!r}; expected YYYY, YYYY-MM or YYYY-MM-DD")
+        if v is not None and parse_partial_date(v) is None:
+            raise ValueError(
+                f"invalid date {v!r}; expected a real calendar date as YYYY, YYYY-MM or YYYY-MM-DD"
+            )
         return v
 
     @model_validator(mode="after")
@@ -317,7 +464,30 @@ class Claim(_Strict):
         ids = [e.evidence_id for e in self.evidence]
         if len(ids) != len(set(ids)):
             raise ValueError("duplicate evidence_id in claim")
+        cited = {i for d in self.metadata for i in d.evidence_ids}
+        if cited - set(ids):
+            raise ValueError("metadata decision cites evidence the claim does not have")
+        if len({d.field for d in self.metadata}) != len(self.metadata):
+            raise ValueError("at most one metadata decision per field")
+        self._check_object_type()
         return self
+
+    def _check_object_type(self) -> None:
+        t, o = self.object_type, self.object
+        if t is None:
+            return
+        if t is ObjectType.MONEY and not (isinstance(o, Quantity) and o.currency):
+            raise ValueError("money object requires a Quantity with currency")
+        if t is ObjectType.PERCENT and not (isinstance(o, Quantity) and o.unit == "percent"):
+            raise ValueError("percent object requires a Quantity with unit 'percent'")
+        if t is ObjectType.NUMBER and not isinstance(o, Quantity):
+            raise ValueError("number object requires a Quantity")
+        if t is ObjectType.DATE and not (isinstance(o, str) and parse_partial_date(o)):
+            raise ValueError("date object must be YYYY, YYYY-MM or YYYY-MM-DD")
+        if t is ObjectType.TEXT and not isinstance(o, str):
+            raise ValueError("text object must be a string")
+        if t is ObjectType.BOOLEAN and not isinstance(o, bool):
+            raise ValueError("boolean object must be a bool")
 
 
 class Relationship(_Strict):
