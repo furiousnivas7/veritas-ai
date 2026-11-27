@@ -1,0 +1,61 @@
+[project]
+name = "veritas-ai"
+version = "0.1.0"
+description = "Evidence-grounded document intelligence and contradiction detection"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { file = "LICENSE" }
+
+# Milestone 1 (ingestion + parsing) only. Add retrieval, API, UI and
+# optimisation dependencies in the milestone that first needs them.
+dependencies = [
+    "docling>=2.0",
+    "pydantic>=2.6",
+    "pydantic-settings>=2.2",
+    "sqlalchemy>=2.0",
+    "ollama>=0.4",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8",
+    "pytest-cov",
+    "ruff",
+    "mypy",
+    # Used only to generate test fixtures / sample documents.
+    "python-docx",
+    "openpyxl",
+    "reportlab",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# macOS can flag the editable-install .pth as hidden, which Python 3.12 skips.
+pythonpath = ["src"]
+markers = [
+    "slow: runs Docling models (first run downloads weights)",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+packages = ["veritas"]
+mypy_path = "src"
+
+[[tool.mypy.overrides]]
+module = ["docling_core.*", "docling.*"]
+implicit_reexport = true
