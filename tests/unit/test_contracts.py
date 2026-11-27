@@ -350,3 +350,15 @@ def test_confidences_are_separate_fields() -> None:
 
 def test_span_kind_values() -> None:
     assert SpanKind.TABLE_CELL == "table_cell"
+
+
+@pytest.mark.parametrize("bad", ["2025-02-30", "2025-02-29", "2025-04-31", "2025-00", "2025-15"])
+def test_claim_rejects_impossible_calendar_dates(bad: str) -> None:
+    with pytest.raises(ValidationError):
+        Claim.model_validate(claim(valid_from=bad))
+    with pytest.raises(ValidationError):
+        Claim.model_validate(claim(object=bad, object_type="date"))
+
+
+def test_claim_accepts_leap_day() -> None:
+    assert Claim.model_validate(claim(valid_from="2024-02-29")).valid_from == "2024-02-29"

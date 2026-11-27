@@ -27,7 +27,7 @@
 * **Only Milestone 1 dependencies are installed** (`pyproject.toml`). Each later dependency is added in the milestone that uses it, which keeps the install small and easy to debug.
 * **Torch comes in transitively through Docling** (~2 GB environment). Sentence-transformers will reuse it.
 * **No `python-magic`.** The three supported formats are recognised by their signatures and OOXML main parts, which avoids a native libmagic dependency.
-* **No Alembic yet.** The schema is created with `create_all`. Migrations start the first time the schema has to change while data already exists.
+* **No Alembic yet.** Missing tables are created with `create_all`. Changes to existing tables go through a small versioned migrator (`core/migrations.py`, `PRAGMA user_version`, backup first), first used for schema v1 (2026-11-28). Revisit Alembic if migrations become frequent.
 * **Qwen3 thinking mode.** `qwen3:4b` reasons in "thinking" mode by default, which corrupts JSON output. The provider must pass `think=False` or use `qwen3:4b-instruct-2507`.
 
 ## Rejected for Phase 0

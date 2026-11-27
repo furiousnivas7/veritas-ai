@@ -39,13 +39,13 @@ The following capabilities represent the project's development objectives.
 |---|---|---|
 | Multi-format ingestion | PDF, DOCX and XLSX validation, hashing, de-duplication, versioning | **Implemented** |
 | Document intelligence | Structured text, heading and table extraction (Docling) | **Implemented** |
-| Claim extraction | Convert document content into atomic claims | Planned |
-| Entity resolution | Identify equivalent entities across documents | Planned |
+| Claim extraction | Atomic claims with modality, period, currency and cited evidence (local LLM + deterministic grounding) | **Implemented** |
+| Entity resolution | Rule-based merging (exact / defined aliases); uncertain matches queued for review | **Implemented** |
 | Knowledge graph | Connect entities, claims and evidence | Planned |
 | Hybrid retrieval | Combine semantic and lexical retrieval | Planned |
 | Contradiction detection | Identify conflicting claims | Planned |
 | Evidence verification | Verify claims against source documents | Planned |
-| Source traceability | Preserve page, sheet and cell references | **Implemented** for parsed spans; claim-level citations planned |
+| Source traceability | Preserve page, sheet and cell references | **Implemented** for parsed spans and claim evidence |
 | Report generation | Generate evidence-grounded reports | Planned |
 
 **Note:** Features will be marked as implemented only after development and testing. "Implemented" means code plus passing tests in this repository; it does not imply evaluated quality.
@@ -65,10 +65,16 @@ python scripts/make_sample_documents.py
 # Ingest and parse them; prints one inspection report per file
 python scripts/ingest.py sample_documents/*
 
+# Extract claims and entities (needs Ollama running with the model pulled)
+ollama pull qwen3:4b
+python scripts/extract.py                      # default model from VERITAS_OLLAMA_MODEL
+VERITAS_OLLAMA_FORMAT=json python scripts/extract.py --model qwen3:4b-instruct-2507-q4_K_M
+
 # Tests
 pytest -m "not slow"   # unit tests, ~2 s, no models
 pytest                 # everything incl. Docling integration tests
                        # (first run downloads models, ~5 min)
+VERITAS_TEST_OLLAMA=1 pytest -m ollama -s   # optional: real local model
 ```
 
 Configuration comes from `VERITAS_*` environment variables or a `.env` file; see [.env.example](.env.example). Runtime data (SQLite database, stored originals, parsed JSON) goes to `./data/`, which is git-ignored.
@@ -259,7 +265,7 @@ VERITAS AI is an independent experimental implementation, not an official extens
 
 **Current stage: Phase 0 → Milestone 1 (document ingestion and parsing)**
 
-Implemented: core data contracts, document ingestion (validation, SHA-256, de-duplication, versioning, SQLite registration), and Docling parsing with page, structure, sheet and cell provenance. Not yet implemented: claim extraction, entity resolution, knowledge graph, retrieval, contradiction detection, verification, API, dashboard. The system does **not** detect contradictions yet.
+Implemented: core data contracts; document ingestion (validation, SHA-256, de-duplication, versioning, SQLite registration); Docling parsing with page, structure, sheet and cell provenance; claim and entity extraction with a local Qwen3 model through Ollama, with every claim grounded in cited source text; rule-based entity resolution. Not yet implemented: knowledge graph, retrieval, contradiction detection, verification, API, dashboard. The system does **not** detect contradictions yet, and extraction quality has **not** been evaluated.
 
 This repository is under active development. Experimental results and performance claims will be published only after reproducible evaluation.
 

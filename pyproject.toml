@@ -6,7 +6,7 @@ readme = "README.md"
 requires-python = ">=3.11"
 license = { file = "LICENSE" }
 
-# Milestone 1 (ingestion + parsing) only. Add retrieval, API, UI and
+# Milestones 1-2 (ingestion, parsing, extraction). Add retrieval, API, UI and
 # optimisation dependencies in the milestone that first needs them.
 dependencies = [
     "docling>=2.0",
@@ -41,6 +41,7 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "slow: runs Docling models (first run downloads weights)",
+    "ollama: needs a running local Ollama (opt-in: VERITAS_TEST_OLLAMA=1)",
 ]
 
 [tool.ruff]

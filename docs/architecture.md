@@ -16,7 +16,8 @@ Status key: **Implemented** = code and tests exist in this repository. **Planned
 |---|---|---|---|
 | Interface | Upload, inspect, report | `api/`, `frontend/streamlit_app/` | Planned |
 | Application | Workflow orchestration | `ingestion/pipeline.py` | **Implemented** (ingest → parse only) |
-| Intelligence | Claim extraction, entity resolution, verification | `extraction/`, `entities/`, `claims/`, `verification/`, `contradictions/`, `llm/` | Planned |
+| Intelligence | Claim extraction, entity resolution | `extraction/`, `entities/`, `llm/` | **Implemented** (Milestone 2) |
+| Intelligence | Verification, contradiction analysis | `verification/`, `contradictions/` | Planned |
 | Retrieval | BM25, dense, graph traversal | `retrieval/`, `graph/` | Planned |
 | Persistence | Documents, spans, claims, evidence | `core/db.py` | **Implemented** (`documents`, `document_spans`) |
 | Evaluation | Benchmarks, metrics, experiments | `evaluation/`, `benchmarks/`, `experiments/` | Planned |
@@ -27,7 +28,7 @@ Shared contracts for all layers live in `core/contracts.py` (**Implemented**).
 
 ```text
  file ─▶ A. Ingestion ─▶ B. Parsing ─▶ C. Claim extraction ─▶ D. Entity resolution
-          (implemented)   (implemented)   (planned)              (planned)
+          (implemented)   (implemented)   (implemented)          (implemented, rule-based)
                                               │
        F. Report ◀─ E'. Verification ◀─ E. Contradiction analysis
         (planned)       (planned)            (planned)
@@ -56,10 +57,39 @@ The behaviour in this table was checked by inspecting Docling's output and is pi
 
 Outputs: spans in `document_spans`; a `ParseReport` on the document row; normalised JSON at `data/parsed/<document_id>.json`; and the raw Docling export at `data/parsed/<document_id>.docling.json`, kept so documents can be re-processed without re-parsing.
 
-### C–F. Planned
+### C. Claim and entity extraction — Implemented (`extraction/`, `llm/`)
 
-* **C. Claim extraction:** an LLM (Qwen3 4B through Ollama, called with `think=False` and a JSON-schema `format`) plus rules for table rows produce `Claim` objects. Pydantic validation rejects claims that have no evidence.
-* **D. Entity resolution:** exact identifiers → normalised strings → aliases → embedding similarity. `SAME_AS` is created only above a confidence threshold or after human review.
+```text
+document_spans ─▶ plan_sources ─▶ batches of [S1..Sn] ─▶ LLMProvider.generate
+  (located only)    text units +       (≤ 1800 chars)        (JSON schema or JSON mode,
+                    table-row units                           temperature 0, fixed seed)
+                                                  │
+        invalid JSON / schema ◀── retry ≤ 2 ──────┤ timeout / server error ◀── retry ≤ 2
+        unavailable / model missing ─▶ abort run (not retried)
+                                                  ▼
+               LLMExtraction (strict Pydantic) ─▶ ClaimValidator (deterministic grounding)
+                                                  ├─▶ Claim + Evidence (sliced from spans)
+                                                  ├─▶ EntityMention
+                                                  └─▶ Rejection (reason, payload)  ─▶ audit
+                                                  ▼
+                      EntityResolver ─▶ save_run (one transaction, span ids re-verified)
+```
+
+* **Sources.** Paragraphs, list items, captions and footnotes become text units. Each data row of a table becomes a row unit rendered as `Header = value | …` and backed by its cell spans, so XLSX claims cite the exact cells. Headings and titles are context, not sources. Spans without a location are never sent to the model.
+* **Model adapter.** `LLMProvider` (`llm/base.py`) with `OllamaProvider` and `MockProvider`. The model, `think`, constrained-output mode, seed, temperature, context size and timeout all come from settings (`VERITAS_OLLAMA_*`) or `--model`. Nothing else names a model.
+* **Prompts** are versioned (`extraction/prompts.py`, `claim_entity_extraction@1.0.0`). Each run stores the prompt id, version and the SHA-256 of prompt + response schema.
+* **Validation** is model-independent. See [data_model.md](data_model.md#extraction-pipeline-contracts-milestone-2) for the full rule table.
+
+### D. Entity resolution — Implemented, rule-based (`entities/`)
+
+* **Identity is not the name.** Entity ids are minted from the mention that founded the entity (`ENT-` + SHA-256 of that mention id), and the database allows any number of entities with the same type and normalised name.
+* **MERGED** only within the same entity type and the same document: (1) an exact normalised-name or proven-alias match with an entity already mentioned in that document, or (2) an explicit `Long Name (ACR)` definition in that document whose acronym really matches.
+* **NEEDS_REVIEW** (never merged): the same name or alias in *another* document (`exact_cross_document`, `alias_definition_cross_document`), reordered words, undefined acronyms, near-identical spelling (difflib ≥ 0.88), aliases claimed only by the model, and names matching several entities in one document (left unassigned).
+* Different entity types never merge. Existing entities and the documents they appear in are loaded before each document, so cross-document matches are found and queued for review.
+* `VERITAS_ENTITY_RESOLUTION_POLICY=global_name_match` restores name-only merging across documents. It is the explicit baseline for experiment E5, not the default. The policy used is recorded in every run's stats.
+* Embedding similarity is not used yet (Milestone 3); when added, it produces candidates only.
+
+### E–F. Planned
 * **E. Contradiction analysis:** candidate pairs must share subject (resolved entity) and predicate. Modality, unit and period compatibility are checked *before* values are compared, so that a proposed and an approved budget are recorded as `CONTEXTUALLY_DIFFERENT`, not `CONTRADICTED`.
 * **E'. Verification:** rules + NLI + LLM, with explicit abstention.
 * **F. Reporting:** reports are generated only from verified records and their evidence; the LLM may phrase them but must not add facts.
@@ -71,7 +101,7 @@ Outputs: spans in `document_spans`; a `ParseReport` on the document row; normali
 | First PDF parse | ~287 s | Includes the one-time Docling model download |
 | Warm PDF parse (2 pages) | ~11 s | Layout and table models on CPU/MPS |
 | DOCX / XLSX parse (samples) | < 0.1 s | No ML models involved |
-| Full test suite | ~56 s | 90 tests, with models cached |
+| Full test suite | ~13 s | 226 tests (1 opt-in live test skipped), Docling models cached |
 
 These are single runs of small sample files, not benchmarks.
 
