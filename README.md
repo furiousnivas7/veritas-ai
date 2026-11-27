@@ -37,18 +37,45 @@ The following capabilities represent the project's development objectives.
 
 | Capability | Description | Status |
 |---|---|---|
-| Multi-format ingestion | PDF, DOCX and XLSX processing | Planned |
-| Document intelligence | Structured text and table extraction | Planned |
+| Multi-format ingestion | PDF, DOCX and XLSX validation, hashing, de-duplication, versioning | **Implemented** |
+| Document intelligence | Structured text, heading and table extraction (Docling) | **Implemented** |
 | Claim extraction | Convert document content into atomic claims | Planned |
 | Entity resolution | Identify equivalent entities across documents | Planned |
 | Knowledge graph | Connect entities, claims and evidence | Planned |
 | Hybrid retrieval | Combine semantic and lexical retrieval | Planned |
 | Contradiction detection | Identify conflicting claims | Planned |
 | Evidence verification | Verify claims against source documents | Planned |
-| Source traceability | Preserve page, sheet and cell references | Planned |
+| Source traceability | Preserve page, sheet and cell references | **Implemented** for parsed spans; claim-level citations planned |
 | Report generation | Generate evidence-grounded reports | Planned |
 
-**Note:** Features will be marked as implemented only after development and testing.
+**Note:** Features will be marked as implemented only after development and testing. "Implemented" means code plus passing tests in this repository; it does not imply evaluated quality.
+
+## Getting Started
+
+Requirements: macOS or Linux, Python 3.11+ (3.12 tested), roughly 3 GB of disk for dependencies and Docling models. Ollama is not needed for Milestone 1.
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+pip install -e ".[dev]"
+
+# Generate the three sample documents (PDF, DOCX, XLSX)
+python scripts/make_sample_documents.py
+
+# Ingest and parse them; prints one inspection report per file
+python scripts/ingest.py sample_documents/*
+
+# Tests
+pytest -m "not slow"   # unit tests, ~2 s, no models
+pytest                 # everything incl. Docling integration tests
+                       # (first run downloads models, ~5 min)
+```
+
+Configuration comes from `VERITAS_*` environment variables or a `.env` file; see [.env.example](.env.example). Runtime data (SQLite database, stored originals, parsed JSON) goes to `./data/`, which is git-ignored.
+
+**macOS note:** if `import veritas` fails with `ModuleNotFoundError` after an editable install, macOS has set the "hidden" flag on the install's `.pth` file, and Python 3.12 skips hidden `.pth` files. This has been seen inside iCloud-synced `~/Documents`. Run `chflags nohidden .venv/lib/python3.*/site-packages/__editable__*.pth`, or prefix commands with `PYTHONPATH=src`. Pytest is unaffected.
+
+Documentation: [architecture](docs/architecture.md) · [data model](docs/data_model.md) · [ADR-001 technology stack](docs/decisions/ADR-001-technology-stack.md) · [research questions](research/research_questions.md) · [benchmark protocol](research/benchmark_protocol.md)
 
 ## System Architecture
 
@@ -230,9 +257,9 @@ VERITAS AI is an independent experimental implementation, not an official extens
 
 ## Project Status
 
-**Current stage: Phase 0 — Research and Engineering Foundation**
+**Current stage: Phase 0 → Milestone 1 (document ingestion and parsing)**
 
-The architecture, technology selection, data contracts and evaluation strategy are being established.
+Implemented: core data contracts, document ingestion (validation, SHA-256, de-duplication, versioning, SQLite registration), and Docling parsing with page, structure, sheet and cell provenance. Not yet implemented: claim extraction, entity resolution, knowledge graph, retrieval, contradiction detection, verification, API, dashboard. The system does **not** detect contradictions yet.
 
 This repository is under active development. Experimental results and performance claims will be published only after reproducible evaluation.
 

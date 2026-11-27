@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+build/
+dist/
+
+# Tooling
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Secrets / local config
+.env
+.env.*
+!.env.example
+
+# Runtime data (generated, never committed)
+data/
+*.sqlite
+*.sqlite3
+*.db
+qdrant_storage/
+
+# Benchmark downloads (large; fetch with scripts/)
+benchmarks/fever/*
+benchmarks/scifact/*
+benchmarks/hover/*
+!benchmarks/*/.gitkeep
+!benchmarks/*/README.md
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
