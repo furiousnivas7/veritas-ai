@@ -1,6 +1,6 @@
 # ADR-001: Initial technology stack
 
-* **Status:** Accepted for Milestone 1 (2026-11-27)
+* **Status:** Accepted for Milestone 1 (2026-11-27). The Milestone 3 vector-search plan below is **superseded by [ADR-003](ADR-003-retrieval-and-graph.md)** (2026-11-28).
 * **Context:** One developer, 15 h/week, MacBook Air M2 with 16 GB, zero paid API budget, 12-week initial window.
 
 ## Decision
@@ -16,8 +16,8 @@
 | Tests / lint / types | pytest, Ruff, mypy (strict on `src/`) | Standard, fast | In use |
 | Local LLM | Ollama + `qwen3:4b` (2.5 GB, already pulled) | Fits in memory alongside Docling; Phi-4-mini as the comparison candidate | Milestone 2 |
 | Embeddings | `BAAI/bge-small-en-v1.5` | Small English baseline; multilingual (e.g. BGE-M3) evaluated separately | Milestone 3 |
-| Vector search | Qdrant (local mode) | Dense + sparse retrieval with RRF fusion | Milestone 3 |
-| Lexical baseline | BM25 (`rank-bm25`) | Testable baseline independent of Qdrant | Milestone 3 |
+| Vector search | ~~Qdrant (local mode)~~ | ~~Dense + sparse retrieval with RRF fusion~~ | **Superseded by ADR-003:** NumPy exact search is the default (D6); Qdrant is an optional, uninstalled extra; RRF is implemented in VERITAS over ranks, not Qdrant-native fusion (D8) |
+| Lexical baseline | BM25 (`rank-bm25`) | Testable baseline independent of any vector backend | Milestone 3 (pinned `0.2.2`, ADR-003) |
 | Graph | NetworkX | In-memory graph built from SQLite; no graph DB needed at this scale | Milestone 3 |
 | API / UI | FastAPI / Streamlit | Thin interfaces over the services | Milestone 5 |
 | Prompt optimisation | DSPy | Only after a measured manual-prompt baseline exists (experiment E6) | Milestone 6 |
@@ -25,7 +25,7 @@
 ## Consequences
 
 * **Only Milestone 1 dependencies are installed** (`pyproject.toml`). Each later dependency is added in the milestone that uses it, which keeps the install small and easy to debug.
-* **Torch comes in transitively through Docling** (~2 GB environment). Sentence-transformers will reuse it.
+* **Torch comes in transitively through Docling** (~2 GB environment). Milestone 3 embeddings reuse it (ADR-003); sentence-transformers is not a dependency.
 * **No `python-magic`.** The three supported formats are recognised by their signatures and OOXML main parts, which avoids a native libmagic dependency.
 * **No Alembic yet.** Missing tables are created with `create_all`. Changes to existing tables go through a small versioned migrator (`core/migrations.py`, `PRAGMA user_version`, backup first), first used for schema v1 (2026-11-28). Revisit Alembic if migrations become frequent.
 * **Qwen3 thinking mode.** `qwen3:4b` reasons in "thinking" mode by default, which corrupts JSON output. The provider must pass `think=False` or use `qwen3:4b-instruct-2507`.

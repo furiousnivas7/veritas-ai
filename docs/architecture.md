@@ -6,7 +6,7 @@ Status key: **Implemented** = code and tests exist in this repository. **Planned
 
 1. **Every fact has a source.** Nothing becomes a claim unless it points to a located span of an ingested document.
 2. **Local first.** The system runs fully offline on a 16 GB Apple Silicon laptop. Cloud models are optional experiment participants and never a dependency.
-3. **The relational store is the source of truth.** The knowledge graph (NetworkX) and the vector index (Qdrant) are derived from it and can be rebuilt.
+3. **The relational store is the source of truth.** The knowledge graph (NetworkX) and the vector index (NumPy exact search by default; Qdrant only as an optional backend, see [ADR-003](decisions/ADR-003-retrieval-and-graph.md)) are derived from it and can be rebuilt.
 4. **Abstain instead of guessing.** "Insufficient evidence" and "requires human review" are valid outputs.
 5. **Never fabricate provenance.** If the parser does not expose a page or cell, the span records that it is missing; no location is inferred.
 
@@ -18,7 +18,7 @@ Status key: **Implemented** = code and tests exist in this repository. **Planned
 | Application | Workflow orchestration | `ingestion/pipeline.py` | **Implemented** (ingest → parse only) |
 | Intelligence | Claim extraction, entity resolution | `extraction/`, `entities/`, `llm/` | **Implemented** (Milestone 2) |
 | Intelligence | Verification, contradiction analysis | `verification/`, `contradictions/` | Planned |
-| Retrieval | BM25, dense, graph traversal | `retrieval/`, `graph/` | Planned |
+| Retrieval | BM25, dense (NumPy exact search), RRF fusion, graph traversal ([ADR-003](decisions/ADR-003-retrieval-and-graph.md)) | `retrieval/`, `graph/` | Planned |
 | Persistence | Documents, spans, claims, evidence | `core/db.py` | **Implemented** (`documents`, `document_spans`) |
 | Evaluation | Benchmarks, metrics, experiments | `evaluation/`, `benchmarks/`, `experiments/` | Planned |
 
